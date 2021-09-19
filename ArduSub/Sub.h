@@ -165,7 +165,7 @@ private:
 #endif
 
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
-    SITL::SITL sitl;
+    SITL::SIM sitl;
 #endif
 
     // Mission library
@@ -591,7 +591,6 @@ private:
     bool verify_nav_delay(const AP_Mission::Mission_Command& cmd);
 
     void log_init(void);
-    void accel_cal_update(void);
     void read_airspeed();
 
     void failsafe_leak_check();

@@ -149,15 +149,10 @@ void AP_Mission::resume()
     //      update will take care of finding and starting the nav command
 }
 
-/// check mission starts with a takeoff command
-bool AP_Mission::starts_with_takeoff_cmd()
+/// check if the next nav command is a takeoff, skipping delays
+bool AP_Mission::is_takeoff_next(uint16_t cmd_index)
 {
     Mission_Command cmd = {};
-    uint16_t cmd_index = _restart ? AP_MISSION_CMD_INDEX_NONE : _nav_cmd.index;
-    if (cmd_index == AP_MISSION_CMD_INDEX_NONE) {
-        cmd_index = AP_MISSION_FIRST_REAL_COMMAND;
-    }
-
     // check a maximum of 16 items, remembering that missions can have
     // loops in them
     for (uint8_t i=0; i<16; i++, cmd_index++) {
@@ -178,6 +173,33 @@ bool AP_Mission::starts_with_takeoff_cmd()
         }
     }
     return false;
+}
+
+/// check mission starts with a takeoff command
+bool AP_Mission::starts_with_takeoff_cmd()
+{
+    uint16_t cmd_index = _restart ? AP_MISSION_CMD_INDEX_NONE : _nav_cmd.index;
+    if (cmd_index == AP_MISSION_CMD_INDEX_NONE) {
+        cmd_index = AP_MISSION_FIRST_REAL_COMMAND;
+    }
+    return is_takeoff_next(cmd_index);
+}
+
+/*
+    return true if MIS_OPTIONS is set to allow continue of mission
+    logic after a land and the next waypoint is a takeoff. If this
+    is false then after a landing is complete the vehicle should 
+    disarm and mission logic should stop
+*/
+bool AP_Mission::continue_after_land_check_for_takeoff()
+{
+    if (!continue_after_land()) {
+        return false;
+    }
+    if (_nav_cmd.index == AP_MISSION_CMD_INDEX_NONE) {
+        return false;
+    }
+    return is_takeoff_next(_nav_cmd.index+1);
 }
 
 /// start_or_resume - if MIS_AUTORESTART=0 this will call resume(), otherwise it will call start()
@@ -967,10 +989,6 @@ MAV_MISSION_RESULT AP_Mission::mavlink_int_to_mission_cmd(const mavlink_mission_
         cmd.content.yaw.relative_angle = packet.param4; // lng=0: absolute angle provided, lng=1: relative angle provided
         break;
 
-    case MAV_CMD_DO_SET_MODE:                           // MAV ID: 176
-        cmd.p1 = packet.param1;                         // flight mode identifier
-        break;
-
     case MAV_CMD_DO_JUMP:                               // MAV ID: 177
         cmd.content.jump.target = packet.param1;        // jump-to command number
         cmd.content.jump.num_times = packet.param2;     // repeat count
@@ -1421,10 +1439,6 @@ bool AP_Mission::mission_cmd_to_mavlink_int(const AP_Mission::Mission_Command& c
         packet.param2 = cmd.content.yaw.turn_rate_dps;  // 0 = use default turn rate otherwise specific turn rate in deg/sec
         packet.param3 = cmd.content.yaw.direction;      // -1 = ccw, +1 = cw
         packet.param4 = cmd.content.yaw.relative_angle; // 0 = absolute angle provided, 1 = relative angle provided
-        break;
-
-    case MAV_CMD_DO_SET_MODE:                           // MAV ID: 176
-        packet.param1 = cmd.p1;                         // set flight mode identifier
         break;
 
     case MAV_CMD_DO_JUMP:                               // MAV ID: 177
@@ -1980,7 +1994,7 @@ uint16_t AP_Mission::num_commands_max(void) const
 // find the nearest landing sequence starting point (DO_LAND_START) and
 // return its index.  Returns 0 if no appropriate DO_LAND_START point can
 // be found.
-uint16_t AP_Mission::get_landing_sequence_start() const
+uint16_t AP_Mission::get_landing_sequence_start()
 {
     struct Location current_loc;
 
@@ -1998,6 +2012,10 @@ uint16_t AP_Mission::get_landing_sequence_start() const
             continue;
         }
         if (tmp.id == MAV_CMD_DO_LAND_START) {
+            if (!tmp.content.location.initialised() && !get_next_nav_cmd(i, tmp)) {
+                // command does not have a valid location and cannot get next valid
+                continue;
+            }
             float tmp_distance = tmp.content.location.get_distance(current_loc);
             if (min_distance < 0 || tmp_distance < min_distance) {
                 min_distance = tmp_distance;
@@ -2305,6 +2323,10 @@ const char *AP_Mission::Mission_Command::type() const
         return "Winch";
     case MAV_CMD_DO_SEND_SCRIPT_MESSAGE:
         return "Scripting";
+    case MAV_CMD_DO_JUMP:
+        return "Jump";
+    case MAV_CMD_DO_GO_AROUND:
+        return "Go Around";
 
     default:
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL

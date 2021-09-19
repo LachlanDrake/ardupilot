@@ -19,16 +19,15 @@
 
 #include "AP_NMEA_Output.h"
 
-#if !HAL_MINIMIZE_FEATURES
+#if HAL_NMEA_OUTPUT_ENABLED
 
 #include <AP_Math/definitions.h>
 #include <AP_RTC/AP_RTC.h>
+#include <AP_AHRS/AP_AHRS.h>
 #include <AP_SerialManager/AP_SerialManager.h>
 
 #include <stdio.h>
 #include <time.h>
-
-AP_NMEA_Output* AP_NMEA_Output::_singleton;
 
 AP_NMEA_Output::AP_NMEA_Output()
 {
@@ -46,11 +45,12 @@ AP_NMEA_Output::AP_NMEA_Output()
 
 AP_NMEA_Output* AP_NMEA_Output::probe()
 {
-    if (!_singleton && AP::serialmanager().find_serial(AP_SerialManager::SerialProtocol_NMEAOutput, 0) != nullptr) {
-       _singleton = new AP_NMEA_Output();
+    AP_NMEA_Output *ret = new AP_NMEA_Output();
+    if (ret == nullptr || ret->_num_outputs == 0) {
+        delete ret;
+        return nullptr;
     }
-
-    return _singleton;
+    return ret;
 }
 
 uint8_t AP_NMEA_Output::_nmea_checksum(const char *str)
@@ -97,7 +97,7 @@ void AP_NMEA_Output::update()
 
     // get location (note: get_position from AHRS always returns true after having GPS position once)
     Location loc;
-    bool pos_valid = ahrs.get_location(loc);
+    bool pos_valid = ahrs.get_position(loc);
 
     // format latitude
     char lat_string[13];
@@ -138,7 +138,7 @@ void AP_NMEA_Output::update()
 
     // get speed
     Vector2f speed = ahrs.groundspeed_vector();
-    float speed_knots = norm(speed.x, speed.y) * M_PER_SEC_TO_KNOTS;
+    float speed_knots = speed.length() * M_PER_SEC_TO_KNOTS;
     float heading = wrap_360(degrees(atan2f(speed.x, speed.y)));
 
     // format RMC message
@@ -187,4 +187,4 @@ void AP_NMEA_Output::update()
     }
 }
 
-#endif  // !HAL_MINIMIZE_FEATURES
+#endif  // HAL_NMEA_OUTPUT_ENABLED
